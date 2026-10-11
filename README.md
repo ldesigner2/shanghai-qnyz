@@ -20,7 +20,7 @@
 - 每60秒自动轮询官方接口
 - 满房突然放出空房时，自动推送到手机（通过Bark App）
 - 监控日志实时记录每次查询结果
-<img width="1280" height="2781" alt="345a74e97a387a2b6659f314ff2cd5b1" src="https://github.com/user-attachments/assets/5f589b55-1b2b-4f22-966a-bb48ae91473f" />
+<img width="675" height="439" alt="d4fc2693-dd9f-49f1-868d-7a05e2428342" src="https://github.com/user-attachments/assets/ce3a29b5-4af2-436c-a8d0-11011c615d81" />
 
 
  🗺️ 筛选功能
