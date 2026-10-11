@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>上海青年驿站实时房源地图</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📍</text></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+  #map { position:absolute; inset:0; z-index:1; }
+  .header {
+    position:absolute; top:0; left:0; right:0; z-index:1000;
+    background:linear-gradient(135deg,#1a1a2e,#16213e); color:#fff;
+    padding:8px 16px; display:flex; align-items:center; justify-content:space-between;
+    box-shadow:0 2px 12px rgba(0,0,0,.3);
+  }
+  .header h1 { font-size:14px; font-weight:600; }
+  .header .sub { font-size:10px; opacity:.7; }
+  .header-right { text-align:right; }
+  .refresh-btn {
+    background:linear-gradient(135deg,#667eea,#764ba2); color:#fff; border:none;
+    padding:6px 14px; border-radius:20px; cursor:pointer; font-size:12px; font-weight:600;
+  }
+  .refresh-btn:hover { opacity:.9; }
+  .refresh-btn:disabled { opacity:.5; }
+  .status-bar { font-size:10px; opacity:.8; margin-top:2px; }
+
+  .sidebar {
+    position:absolute; top:56px; left:0; bottom:0; width:290px; z-index:999;
+    background:#fff; overflow-y:auto; box-shadow:2px 0 12px rgba(0,0,0,.1);
+    padding:10px; transition:transform .3s;
+  }
+  .sidebar.collapsed { transform:translateX(-290px); }
+  .toggle-btn {
+    position:absolute; top:64px; left:298px; z-index:1001;
+    background:#fff; border:1px solid #ddd; border-radius:0 8px 8px 0;
+    width:26px; height:44px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    box-shadow:2px 0 6px rgba(0,0,0,.1); font-size:13px; color:#666; transition:left .3s;
+  }
+  .toggle-btn.collapsed { left:0; }
+  .section-title {
+    font-size:11px; font-weight:700; color:#333; margin-bottom:6px;
+    padding-bottom:4px; border-bottom:2px solid #f0f0f0; margin-top:8px;
+  }
+  .section-title:first-child { margin-top:0; }
+
+  .date-row { display:flex; gap:6px; margin-bottom:6px; align-items:center; }
+  .date-row label { font-size:10px; color:#555; white-space:nowrap; }
+  .date-row input {
+    flex:1; padding:4px; font-size:11px; border:1px solid #ddd; border-radius:5px;
+  }
+  .query-btn {
+    width:100%; padding:7px; font-size:12px; border:none; border-radius:6px;
+    background:#e74c3c; color:#fff; cursor:pointer; font-weight:700; margin-bottom:6px;
+  }
+  .query-btn:hover { background:#c0392b; }
+  .query-btn:disabled { opacity:.5; }
+
+  .avail-btn {
+    width:100%; padding:5px; font-size:11px; border:none; border-radius:6px;
+    background:#27ae60; color:#fff; cursor:pointer; font-weight:600; margin-bottom:6px;
+  }
+  .avail-btn:hover { background:#229954; }
+
+  .rank-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-bottom:6px; }
+  .rank-btn {
+    padding:5px 3px; font-size:10px; border:1.5px solid #ddd; border-radius:8px;
+    background:#fff; cursor:pointer; text-align:center; line-height:1.3;
+  }
+  .rank-btn.active { background:linear-gradient(135deg,#667eea,#764ba2); color:#fff; border-color:transparent; font-weight:600; }
+  .rank-btn .rank-desc { font-size:9px; opacity:.75; display:block; }
+
+  .all-none-row { display:flex; gap:6px; margin-bottom:6px; }
+  .all-none-row button {
+    flex:1; padding:3px; font-size:10px; border:1px solid #ddd; border-radius:5px;
+    background:#f8f9fa; cursor:pointer;
+  }
+  .checkbox-item {
+    display:flex; align-items:center; padding:3px 5px; border-radius:5px; cursor:pointer; font-size:11px;
+  }
+  .checkbox-item:hover { background:#f5f7fa; }
+  .checkbox-item input { margin-right:6px; width:13px; height:13px; cursor:pointer; }
+  .checkbox-item .c-dot {
+    width:12px; height:12px; border-radius:50%; margin-right:5px; flex-shrink:0;
+    border:2px solid #fff; box-shadow:0 1px 2px rgba(0,0,0,.3);
+    display:flex; align-items:center; justify-content:center; font-size:7px; color:#fff; font-weight:700;
+  }
+  .checkbox-item .c-rooms { font-size:9px; color:#27ae60; margin-left:auto; font-weight:600; }
+  .checkbox-item .c-count { font-size:9px; color:#999; margin-left:4px; }
+
+  .num-marker {
+    display:flex; align-items:center; justify-content:center; border-radius:50%;
+    border:3px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4);
+    font-size:10px; font-weight:700; color:#fff;
+  }
+  .leaflet-popup-content-wrapper { border-radius:10px; }
+  .leaflet-popup-content { margin:10px 12px; font-size:11px; line-height:1.6; width:250px !important; }
+  .popup-badge { display:inline-block; padding:2px 8px; border-radius:10px; color:#fff; font-size:10px; font-weight:700; margin-bottom:5px; }
+  .popup-name { font-weight:700; font-size:13px; margin-bottom:3px; }
+  .popup-district { color:#888; font-size:10px; margin-bottom:5px; }
+  .popup-rooms { background:#e8f8f0; color:#27ae60; padding:5px 8px; border-radius:6px; font-size:11px; font-weight:700; margin-bottom:5px; }
+  .popup-rooms.none { background:#fde8e8; color:#e74c3c; }
+  .popup-desc { color:#444; font-size:11px; line-height:1.6; }
+  .popup-addr { color:#999; font-size:10px; margin-top:5px; padding-top:5px; border-top:1px solid #eee; }
+
+  .legend {
+    position:absolute; bottom:25px; right:12px; z-index:999;
+    background:rgba(255,255,255,.95); border-radius:8px; padding:8px 10px;
+    box-shadow:0 2px 8px rgba(0,0,0,.15); font-size:10px;
+  }
+  .legend-row { display:flex; align-items:center; margin-bottom:2px; }
+  .legend-dot { width:12px; height:12px; border-radius:50%; margin-right:5px; border:2px solid #fff; box-shadow:0 1px 2px rgba(0,0,0,.3); }
+
+  /* 右侧有房列表 */
+  .result-panel {
+    position:absolute; top:56px; right:0; bottom:0; width:320px; z-index:998;
+    background:#fff; box-shadow:-2px 0 12px rgba(0,0,0,.1);
+    display:none; flex-direction:column;
+  }
+  .result-panel.open { display:flex; }
+  .result-toggle {
+    position:absolute; top:64px; right:0; z-index:999;
+    background:#fff; border:1px solid #ddd; border-radius:8px 0 0 8px;
+    width:26px; height:44px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    box-shadow:-2px 0 6px rgba(0,0,0,.1); font-size:13px; color:#666; transition:right .3s;
+  }
+  .result-header {
+    padding:10px 14px; background:linear-gradient(135deg,#27ae60,#2ecc71); color:#fff;
+    font-weight:700; font-size:13px; display:flex; justify-content:space-between; align-items:center;
+  }
+  .result-close { cursor:pointer; font-size:18px; opacity:.8; padding:0 4px; }
+  .result-close:hover { opacity:1; }
+  .result-list { flex:1; overflow-y:auto; padding:6px; }
+  .result-item {
+    padding:10px 12px; border-bottom:1px solid #f0f0f0; cursor:pointer; border-radius:8px;
+  }
+  .result-item:hover { background:#f5f7fa; }
+  .result-item .r-num {
+    display:inline-block; background:#27ae60; color:#fff; font-size:10px; font-weight:700;
+    padding:1px 7px; border-radius:10px; margin-right:6px;
+  }
+  .result-item .r-name { font-size:12px; font-weight:600; color:#333; }
+  .result-item .r-meta { font-size:10px; color:#888; margin-top:3px; }
+  .result-item .r-rooms { color:#27ae60; font-weight:700; }
+  .result-item .r-rooms.none { color:#ccc; font-weight:400; }
+  .r-bell {
+    float:right; cursor:pointer; font-size:16px; padding:2px 6px; border-radius:4px;
+    background:#f0f0f0; transition:all .2s;
+  }
+  .r-bell.on { background:#e74c3c; color:#fff; }
+  .r-bell:hover { background:#ddd; }
+  .r-bell.on:hover { background:#c0392b; }
+  .result-empty { padding:30px; text-align:center; color:#999; font-size:12px; }
+  @media (max-width:768px) {
+    .header { padding:6px 10px; }
+    .header h1 { font-size:13px; }
+    .header .sub { display:none; }
+    .header-right .refresh-btn { padding:4px 8px; font-size:10px; }
+    .status-bar { font-size:9px; max-width:100px; }
+    .sidebar { width:85vw; max-width:300px; top:44px; }
+    .toggle-btn { left:calc(85vw + 8px); top:50px; }
+    .toggle-btn.collapsed { left:0; }
+    .sidebar.collapsed { transform:translateX(-85vw); }
+    .legend { display:none; }
+    .result-panel { width:100vw; top:44px; }
+    .result-toggle { display:none !important; }
+    .mobile-list-btn { display:block !important; }
+    #closePanel { display:inline !important; }
+    .result-panel.open { width:100vw; }
+    .num-marker { font-size:10px !important; }
+    .result-item { padding:10px 12px; }
+    .result-header { padding:8px 12px; font-size:12px; }
+    #searchBox { padding:8px 12px; font-size:13px; }
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>上海青年驿站实时房源地图</h1>
+    <div class="sub"></div>
+  </div>
+  <div class="header-right">
+    <button class="refresh-btn" id="refreshBtn">刷新房源</button>
+    <div class="status-bar" id="statusBar">点击刷新获取最新数据</div>
+  </div>
+</div>
+<div id="map"></div>
+<div class="toggle-btn" id="toggleBtn">◀</div>
+
+<div class="sidebar" id="sidebar">
+  <div class="section-title">房源监控（Bark推送）</div>
+  <div class="date-row"><label>入住</label><input type="date" id="dateFrom"></div>
+  <div class="date-row"><label>离店</label><input type="date" id="dateTo"></div>
+  <button class="query-btn" id="queryBtn">查询</button>
+  <div style="font-size:10px;color:#666;margin:6px 0 4px;">Bark Key</div>
+  <input type="text" id="barkKey" placeholder="粘贴Bark Key" style="width:100%;padding:5px;font-size:11px;border:1px solid #ddd;border-radius:5px;margin-bottom:6px;">
+  <button id="monitorBtn" style="width:100%;padding:6px;font-size:11px;border:none;border-radius:6px;background:#3498db;color:#fff;cursor:pointer;font-weight:600;margin-bottom:4px;">开始监控（每60秒刷新）</button>
+  <div id="favList" style="font-size:10px;color:#666;"></div>
+  <button id="clearFav" style="width:100%;padding:4px;font-size:10px;border:1px solid #e74c3c;border-radius:4px;background:#fff;color:#e74c3c;cursor:pointer;margin-top:4px;">清空全部监控</button>
+  <div style="font-size:10px;color:#333;font-weight:600;margin-top:6px;display:flex;justify-content:space-between;">监控日志 <span onclick="clearLog()" style="color:#999;cursor:pointer;font-weight:400;">清空</span></div>
+  <div id="monitorLog" style="font-size:10px;color:#666;max-height:120px;overflow-y:auto;border-top:1px solid #eee;padding-top:4px;margin-top:2px;"></div>
+
+  <div class="section-title">筛选</div>
+  <div class="rank-grid" id="rankGrid"></div>
+  <div class="all-none-row">
+    <button id="btnAll">全选</button>
+    <button id="btnNone">全不选</button>
+  </div>
+  <div id="districtList"></div>
+</div>
+
+<div class="legend">
+  <div style="font-weight:700;margin-bottom:4px;">图例</div>
+  <div class="legend-row"><div class="legend-dot" style="background:#27ae60;"></div>有房可预约</div>
+  <div class="legend-row"><div class="legend-dot" style="background:#bbb;"></div>无房/未上架</div>
+</div>
+
+<div class="result-panel" id="resultPanel">
+  <div class="result-header">
+    <span id="resultTitle">可预约驿站</span>
+    <span id="resetList" style="cursor:pointer;font-size:11px;font-weight:400;opacity:0.9;">显示全部</span>
+    <span id="closePanel" style="display:none;cursor:pointer;font-size:18px;line-height:1;margin-left:auto;padding:0 4px;">×</span>
+  </div>
+  <input type="text" id="searchBox" placeholder="搜索驿站名称/区域..." style="width:100%;padding:6px 10px;font-size:12px;border:none;border-bottom:1px solid #eee;box-sizing:border-box;outline:none;">
+  <div class="result-list" id="resultList"></div>
+</div>
+<button class="result-toggle" id="resultToggle" style="right:320px;">◀</button>
+<button class="mobile-list-btn" id="mobileListBtn" style="display:none;position:fixed;bottom:20px;right:15px;z-index:1000;background:#27ae60;color:#fff;border:none;border-radius:24px;padding:12px 20px;font-size:14px;box-shadow:0 2px 10px rgba(0,0,0,.3);cursor:pointer;">驿站列表</button>
+
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const stationsData = [{"id":1,"apiId":194,"name":"和光寓外滩店青年驿站","district":"黄浦区","lat":31.234359,"lng":121.487009,"rooms":3,"onShelf":"1","addr":"黄浦区中山东二路8弄3号2幢","desc":"外滩核心地段，步行几分钟即达外滩滨江，看万国建筑群和陆家嘴三件套。公寓型带冰箱洗烘一体机。去豫园、南京路、BFC都很近。房源极少需抢。"},{"id":2,"apiId":241,"name":"汉庭上海静安寺江宁路新酒店青年驿站","district":"静安区","lat":31.2386631,"lng":121.44476807,"rooms":39,"onShelf":"1","addr":"静安区昌平路317号（距地铁7号线昌平路站4号口744米，步行约10分钟）","desc":"静安核心，7号线昌平路站。去静安寺、南京西路、武康路、愚园路、玉佛寺、新天地都很近。老洋房网红咖啡店海派氛围浓。24小时前台。"},{"id":3,"apiId":238,"name":"汉庭优佳上海中山公园延安路酒店青年驿站","district":"长宁区","lat":31.21202056,"lng":121.42498307,"rooms":19,"onShelf":"1","addr":"长宁区番禺路1号（距10号线/11号线交通大学站6号口800m步行9分钟，近交通大学长宁校区）","desc":"近中山公园、新华路历史风貌区。梧桐街道网红咖啡馆集中，适合citywalk。10/11号线交通大学站。"},{"id":4,"apiId":228,"name":"7天酒店（上海江宁路地铁站玉佛寺）青年驿站","district":"静安区","lat":31.24349251,"lng":121.44205353,"rooms":10,"onShelf":"1","addr":"上海市静安区安远路139号","desc":"玉佛寺对面，近江宁路地铁站。步行可达静安寺、南京西路商圈。价格实惠。"},{"id":5,"apiId":225,"name":"锦江之星北外滩杨浦大桥青年驿站","district":"杨浦区","lat":31.26908144,"lng":121.53524135,"rooms":30,"onShelf":"1","addr":"上海市杨浦区临青路333号","desc":"北外滩片区临青路，拍陆家嘴夜景绝佳。北外滩滨江、白玉兰广场。房源总量大预约成功率高。"},{"id":6,"apiId":226,"name":"锦江之星风尚上海北外滩青年驿站","district":"杨浦区","lat":31.2685622,"lng":121.53586977,"rooms":15,"onShelf":"1","addr":"上海市杨浦区平凉路1625号","desc":"北外滩片区平凉路，近白玉兰广场、北外滩滨江。看陆家嘴江景视野好。"},{"id":7,"apiId":237,"name":"宜必思上海新国际博览中心联洋店青年驿站","district":"浦东新区","lat":31.22898778,"lng":121.55274523,"rooms":53,"onShelf":"1","addr":"芳甸路200号（地铁9号线芳甸路2号口出站直行，十字路口左转500米即可到达）","desc":"浦东联洋富人区安静干净近世纪公园。去陆家嘴、科技馆、东方明珠方便。跨江去浦西通勤较长。"},{"id":8,"apiId":222,"name":"7天酒店（新7天上海陆家嘴世茂滨江花园）青年驿站","district":"浦东新区","lat":31.21817863,"lng":121.51035491,"rooms":10,"onShelf":"1","addr":"上海市浦东新区浦明路999号","desc":"浦明路999号陆家嘴金融区旁，近世茂滨江花园。江景视野好。"},{"id":9,"apiId":218,"name":"上海光大会展中心国际大酒店青年驿站","district":"徐汇区","lat":31.1695459107398,"lng":121.424609332028,"rooms":28,"onShelf":"1","addr":"上海市徐汇区漕宝路66号","desc":"徐汇区驿站，上海市徐汇区漕宝路66号。"},{"id":10,"apiId":227,"name":"7天酒店（新7天上海西藏南路地铁站）青年驿站","district":"黄浦区","lat":31.20453189,"lng":121.48582662,"rooms":10,"onShelf":"1","addr":"上海市黄浦区中山南路1820号","desc":"8/4号线西藏南路站，近人民广场、豫园、新天地。换乘便利。经济型酒店性价比高。"},{"id":11,"apiId":187,"name":"徐汇白居易公寓青年驿站","district":"徐汇区","lat":31.169367392304423,"lng":121.43943910850227,"rooms":6,"onShelf":"1","addr":"上海市徐汇区凯旋南路31号","desc":"徐汇区驿站，上海市徐汇区凯旋南路31号。"},{"id":12,"apiId":72,"name":"美桔服务式公寓青年驿站","district":"徐汇区","lat":31.16712689,"lng":121.43081436,"rooms":6,"onShelf":"1","addr":"徐汇区东漕河泾57号","desc":"徐汇区驿站，徐汇区东漕河泾57号。"},{"id":13,"apiId":223,"name":"7天优品（上海大木桥地铁站店）青年驿站","district":"徐汇区","lat":31.19963045,"lng":121.4615968,"rooms":3,"onShelf":"1","addr":"上海市徐汇区茶陵路218号","desc":"打浦桥日月光商圈旁，4/12号线大木桥路站。近肇嘉浜路、徐家汇、新天地。"},{"id":14,"apiId":199,"name":"卢宛158项目青年驿站","district":"黄浦区","lat":31.2095787,"lng":121.48529226,"rooms":3,"onShelf":"1","addr":"上海市黄浦区保屯路26号","desc":"黄浦区保屯路，近西藏南路地铁站。近人民广场、南京路步行街，步行可达外滩。"},{"id":15,"apiId":200,"name":"微领地新静安中心社区（二期）青年驿站","district":"静安区","lat":31.31291334,"lng":121.4479183,"rooms":30,"onShelf":"1","addr":"静安区临汾路1000弄2号","desc":"静安区临汾路，近大宁。微领地青年公寓品牌社群活动丰富。"},{"id":16,"apiId":201,"name":"友间公寓大统路社区青年驿站","district":"静安区","lat":31.257569028356478,"lng":121.45430317818563,"rooms":15,"onShelf":"1","addr":"静安区大统路988号A幢","desc":"静安区驿站，静安区大统路988号A幢。"},{"id":17,"apiId":229,"name":"7天酒店（新7天上海大宁国际延长路地铁站）青年驿站","district":"静安区","lat":31.2716051,"lng":121.44461196,"rooms":10,"onShelf":"1","addr":"上海市静安区万荣路32号","desc":"大宁国际商圈旁，近马戏城、大宁灵石公园。1号线延长路站可达市中心。"},{"id":18,"apiId":195,"name":"璟辰公寓青年驿站","district":"长宁区","lat":31.1943440110001,"lng":121.400246407,"rooms":2,"onShelf":"1","addr":"长宁区伊犁南路288弄","desc":"长宁区伊犁南路，近中山公园、江苏路商圈。2/11号线可达市中心。"},{"id":19,"apiId":220,"name":"锦江之星上海世博园区浦三路青年驿站","district":"浦东新区","lat":31.19669282,"lng":121.50874945,"rooms":20,"onShelf":"1","addr":"上海市浦东新区浦三路208号","desc":"近世博园区、梅奔文化中心、前滩。6号线可达陆家嘴。"},{"id":20,"apiId":181,"name":"城方·耀华璟滨社区青年驿站","district":"浦东新区","lat":31.17011865,"lng":121.4703643,"rooms":2,"onShelf":"1","addr":"济明路518弄","desc":"济明路518弄，前滩/耀华板块近世博滨江。城投旗下品质有保障。"},{"id":21,"apiId":132,"name":"徐房悦庭·M社区青年驿站","district":"徐汇区","lat":31.17253139,"lng":121.42831025,"rooms":2,"onShelf":"1","addr":"徐汇区漕溪路258弄28-33号","desc":"徐汇区驿站，徐汇区漕溪路258弄28-33号。"},{"id":22,"apiId":240,"name":"汉庭上海五角场酒店青年驿站","district":"杨浦区","lat":31.29648255,"lng":121.51620724,"rooms":68,"onShelf":"1","addr":"杨浦区国定东路339号（10号线五角场站2号出口沿四平路350米到国定路左转600米，步行15分钟）","desc":"五角场商圈核心，近复旦、同济、财大。合生汇万达商圈齐全。10号线直达市中心。"},{"id":23,"apiId":193,"name":"虹桥人才公寓（西区）青年驿站","district":"长宁区","lat":31.19064751,"lng":121.35121315,"rooms":30,"onShelf":"1","addr":"长宁区广虹路98弄","desc":"长宁区广虹路，虹桥商务区西区。近虹桥开发区。10号线可达。"},{"id":24,"apiId":224,"name":"锦江之星五角场同济大学地铁站青年驿站","district":"杨浦区","lat":31.2871858191803,"lng":121.502898635399,"rooms":15,"onShelf":"1","addr":"上海市杨浦区四平路1251号","desc":"同济大学正门旁，10号线同济大学站。近五角场、复旦、财大。"},{"id":25,"apiId":77,"name":"上海檀程大酒店青年驿站","district":"杨浦区","lat":31.30626249,"lng":121.48779125,"rooms":2,"onShelf":"1","addr":"上海市杨浦区武东路188号","desc":"上海财经大学校园内，近肺科医院、复旦。五星标准走驿站价格。环境安静学术氛围。"},{"id":26,"apiId":216,"name":"友间公寓宝地虹乐苑青年驿站","district":"虹口区","lat":31.283866,"lng":121.461916,"rooms":30,"onShelf":"1","addr":"虹口区广粤路76号","desc":"虹口区驿站，虹口区广粤路76号。"},{"id":27,"apiId":221,"name":"康铂酒店上海滴水湖天文馆青年驿站","district":"临港新片区","lat":30.90504638,"lng":121.91955127,"rooms":20,"onShelf":"1","addr":"上海市浦东新区南汇新城镇环湖西二路960号","desc":"滴水湖+上海天文馆旁边，湖景环湖步道治愈。毗邻海昌海洋公园。离市区极远，16号线单程1.5h+。"},{"id":28,"apiId":191,"name":"友间公寓宁国路社区青年驿站","district":"杨浦区","lat":31.27348307,"lng":121.52712605,"rooms":20,"onShelf":"1","addr":"杨浦区黄兴路217号","desc":"杨浦区驿站，杨浦区黄兴路217号。"},{"id":29,"apiId":239,"name":"汉庭上海大宁国际广粤路酒店青年驿站","district":"虹口区","lat":31.2888568626083,"lng":121.460094645035,"rooms":16,"onShelf":"1","addr":"广粤路281号(距1号线马戏城站1号口1.5公里骑行6分钟)","desc":"大宁国际商圈旁，近上海马戏城、大宁灵石公园。1号线马戏城站可达市中心。"},{"id":30,"apiId":190,"name":"友间公寓四平路社区青年驿站","district":"虹口区","lat":31.26808816,"lng":121.48689689,"rooms":15,"onShelf":"1","addr":"虹口区四平路333号","desc":"虹口区驿站，虹口区四平路333号。"},{"id":31,"apiId":215,"name":"美多家公寓青年驿站","district":"虹口区","lat":31.30134655,"lng":121.47201028,"rooms":10,"onShelf":"1","addr":"虹口区水电路1461号","desc":"虹口区水电路，近四川北路、海伦路商圈。"},{"id":32,"apiId":179,"name":"（上海市团校）青年驿站","district":"虹口区","lat":31.2765117836799,"lng":121.474502390136,"rooms":3,"onShelf":"1","addr":"虹口区西江湾路574号","desc":"西江湾路574号团校内，环境安静安全。近虹口足球场、曲阳商圈。"},{"id":33,"apiId":188,"name":"城投宽庭张江社区青年驿站","district":"浦东新区","lat":31.13447601,"lng":121.6079874,"rooms":35,"onShelf":"1","addr":"浦东新区箭桥路615弄","desc":"箭桥路615弄，张江科学城核心区。适合IT、医药行业。"},{"id":34,"apiId":189,"name":"和欣公寓青年驿站","district":"普陀区","lat":31.27808554,"lng":121.3884811,"rooms":30,"onShelf":"1","addr":"普陀区武威东路718号","desc":"普陀区驿站，普陀区武威东路718号。"},{"id":35,"apiId":64,"name":"浦发有家·唐镇社区青年驿站","district":"浦东新区","lat":31.23076278,"lng":121.6670083,"rooms":3,"onShelf":"1","addr":"浦东新区德淳路299弄","desc":"德淳路299弄，2号线唐镇站直达陆家嘴。浦发银行旗下保租房。"},{"id":36,"apiId":177,"name":"张江纳仕国际社区驿站","district":"浦东新区","lat":31.17042755,"lng":121.6179038,"rooms":2,"onShelf":"1","addr":"浦东新区茂春路98号122弄（右里Z区）","desc":"茂春路98号，张江国际社区配套国际化。"},{"id":37,"apiId":168,"name":"慧智云璟青年驿站","district":"浦东新区","lat":31.24070321,"lng":121.61466344,"rooms":2,"onShelf":"1","addr":"浦东新区金葵路560弄","desc":"金葵路560弄，浦东中部近杨高中路。适合联洋、金桥、张江求职。"},{"id":38,"apiId":171,"name":"森兰来舍青年驿站","district":"浦东新区","lat":31.34483304,"lng":121.59282145,"rooms":2,"onShelf":"1","addr":"浦东新区日京路106号","desc":"日京路106号，外高桥森兰板块环境绿化好。6号线洲海路站。"},{"id":39,"apiId":175,"name":"金桥微澜·暮紫里公寓青年驿站","district":"浦东新区","lat":31.207049,"lng":121.678818,"rooms":2,"onShelf":"1","addr":"浦东新区利川路421弄","desc":"利川路421弄，金桥开发区旁。9号线蓝天路站。"},{"id":40,"apiId":182,"name":"森兰星遇祝桥海天店青年驿站","district":"浦东新区","lat":31.10232506,"lng":121.76506618,"rooms":2,"onShelf":"1","addr":"上海市浦东新区秋亭路389弄30-33单元","desc":"秋亭路389弄，近浦东机场、上海东站。"},{"id":41,"apiId":184,"name":"浦发有家康涵社区青年驿站","district":"浦东新区","lat":31.120327,"lng":121.547077,"rooms":2,"onShelf":"1","addr":"上海市浦东新区浦三路4800弄","desc":"浦三路4800弄，康桥板块。"},{"id":42,"apiId":169,"name":"慧智有巢青年驿站","district":"浦东新区","lat":31.07803443,"lng":121.58224635,"rooms":2,"onShelf":"1","addr":"浦东新区沪南路4699弄","desc":"沪南路4699弄，华润有巢品牌。近9号线。"},{"id":43,"apiId":180,"name":"港城领寓·泥城青年驿站","district":"浦东新区","lat":30.8951333580001,"lng":121.793508912,"rooms":2,"onShelf":"1","addr":"浦东新区白絮路66弄","desc":"白絮路66弄，临港泥城板块。近临港大学城。"},{"id":44,"apiId":176,"name":"浦发有家康桥社区青年驿站","district":"浦东新区","lat":31.13544587,"lng":121.6100377,"rooms":2,"onShelf":"1","addr":"浦东新区宁丰路238弄","desc":"宁丰路238弄，11号线可达迪士尼、徐家汇。"},{"id":45,"apiId":183,"name":"浦发有家康泽社区青年驿站","district":"浦东新区","lat":31.116483,"lng":121.552838,"rooms":2,"onShelf":"1","addr":"上海浦东新区曲桥路157弄","desc":"曲桥路157弄，康桥板块。"},{"id":46,"apiId":173,"name":"数智天地·悦庭04青年驿站","district":"浦东新区","lat":31.1245878,"lng":121.56537586,"rooms":2,"onShelf":"1","addr":"浦东新区康恒路188弄1-3号","desc":"康恒路188弄，数智天地产业园旁。近11号线。"},{"id":47,"apiId":170,"name":"慧智仁恒派青年驿站","district":"浦东新区","lat":31.106111,"lng":121.600104,"rooms":1,"onShelf":"1","addr":"浦东新区周秀北路19弄","desc":"周秀北路19弄，仁恒品牌品质较好。"},{"id":48,"apiId":219,"name":"白玉兰酒店大宁国际同济医院青年驿站","district":"普陀区","lat":31.27376233,"lng":121.4270692,"rooms":0,"onShelf":"1","addr":"上海市普陀区志丹路524号","desc":"近大宁国际商业广场、大宁灵石公园。同济医院旁。白玉兰中端酒店。"},{"id":49,"apiId":242,"name":"桔子上海虹桥延安西路酒店青年驿站","district":"闵行区","lat":31.18622755,"lng":121.37850445,"rooms":64,"onShelf":"1","addr":"闵行区虹中路388弄16号（距地铁10号线龙溪路站2号口1.7km，步行25分钟）","desc":"虹中路388弄，华住旗下中端设计感强。近虹桥商务区。"},{"id":50,"apiId":197,"name":"城投宽庭莘庄社区青年驿站","district":"闵行区","lat":31.05478885,"lng":121.41060415,"rooms":40,"onShelf":"1","addr":"闵行区都市路1600弄","desc":"都市路1600弄，近莘庄地铁站。国企品牌品质稳定。1号线直达市中心。"},{"id":51,"apiId":192,"name":"华润有巢公寓社区马桥AI店青年驿站","district":"闵行区","lat":31.02440753,"lng":121.3529897,"rooms":15,"onShelf":"1","addr":"闵行区中青路588弄","desc":"中青路588弄，马桥AI创新区。"},{"id":52,"apiId":231,"name":"7天酒店（新7天上海莘庄地铁站龙之梦广场）青年驿站","district":"闵行区","lat":31.11564626,"lng":121.37134004,"rooms":10,"onShelf":"1","addr":"上海市闵行区七莘路299号","desc":"莘庄枢纽站，1/5号线换乘。龙之梦旁生活配套齐全。直达人民广场约30分钟。"},{"id":53,"apiId":232,"name":"锦江之星品尚上海新虹桥青年驿站","district":"闵行区","lat":31.1887373477466,"lng":121.410256958725,"rooms":10,"onShelf":"1","addr":"上海市吴中路259号","desc":"近漕河泾开发区、吴中路商圈。15号线可达。品尚系列更高档。"},{"id":54,"apiId":230,"name":"白玉兰酒店上海锦江乐园青年驿站","district":"闵行区","lat":31.14348994,"lng":121.40578771,"rooms":10,"onShelf":"1","addr":"上海市闵行区虹梅路227号","desc":"1号线锦江乐园站旁，直达上海南站、人民广场。近锦江乐园、梅陇商圈。"},{"id":55,"apiId":206,"name":"城方活力社区 · 江月路店青年驿站","district":"闵行区","lat":31.08632201,"lng":121.50090365,"rooms":5,"onShelf":"1","addr":"闵行区南江洲路55号","desc":"南江洲路55号，8号线江月路站可达前滩、人民广场。"},{"id":56,"apiId":100,"name":"闵房抱家公寓（七宝店）青年驿站","district":"闵行区","lat":31.14322183,"lng":121.34095526,"rooms":2,"onShelf":"1","addr":"闵行区中春路7228-2临","desc":"中春路7228-2，七宝古镇旁。9号线中春路站。"},{"id":57,"apiId":185,"name":"创社区青年驿站","district":"闵行区","lat":31.0318482,"lng":121.46723926,"rooms":2,"onShelf":"1","addr":"上海市闵行区东川路150弄","desc":"东川路150弄，近5号线闵行开发区站。青年创业就业主题公寓。"},{"id":58,"apiId":233,"name":"锦江之星虹桥火车站国家会展中心青年驿站","district":"闵行区","lat":31.21516017,"lng":121.2817611,"rooms":0,"onShelf":"1","addr":"上海市闵行区纪翟路888号","desc":"纪翟路888号，近虹桥火车站、国展中心。2/10/17号线交汇。"},{"id":59,"apiId":202,"name":"城璟宝山中环社区青年驿站","district":"宝山区","lat":31.297187546845727,"lng":121.39254604452401,"rooms":25,"onShelf":"1","addr":"宝山区环镇南路858号","desc":"环镇南路858号，宝山中环附近。1/3号线可达。"},{"id":60,"apiId":246,"name":"汉庭上海奉贤四团宝龙广场酒店青年驿站","district":"临港新片区","lat":30.93520921,"lng":121.7315357,"rooms":25,"onShelf":"1","addr":"上海市奉贤区港佳路291号","desc":"港佳路291号，奉贤四团镇。"},{"id":61,"apiId":213,"name":"宝山璟晗社区青年驿站","district":"宝山区","lat":31.45398658,"lng":121.34987282,"rooms":23,"onShelf":"1","addr":"宝山区金勺路901弄","desc":"金勺路901弄，近大场镇。7号线可达市区。"},{"id":62,"apiId":186,"name":"瓴舍城苑青年驿站","district":"临港新片区","lat":30.89230785,"lng":121.80359709,"rooms":20,"onShelf":"1","addr":"浦东新区泥城镇云端路833弄","desc":"云端路833弄，临港主岛近滴水湖。"},{"id":63,"apiId":243,"name":"汉庭上海顾村公园地铁站酒店青年驿站","district":"宝山区","lat":31.351245,"lng":121.377664,"rooms":16,"onShelf":"1","addr":"沪太公路4988号1-4层（华山医院宝山院区附近）","desc":"沪太公路4988号，顾村公园樱花季打卡地。7号线可达市区。华山医院宝山院区旁。"},{"id":64,"apiId":198,"name":"金地草莓社区南大店（北区）青年驿站","district":"宝山区","lat":31.29749371,"lng":121.36536019,"rooms":15,"onShelf":"1","addr":"上海市宝山区清卓路125弄2号","desc":"清卓路125弄，南大智慧城板块。15号线可达。"},{"id":65,"apiId":234,"name":"锦江之星上海宝山友谊路青年驿站","district":"宝山区","lat":31.40580446,"lng":121.46536129,"rooms":5,"onShelf":"1","addr":"上海市宝山区盘古路711号","desc":"盘古路711号，3号线友谊路站。宝钢板块。"},{"id":66,"apiId":92,"name":"友间公寓 同济路社区青年驿站","district":"宝山区","lat":31.37983567,"lng":121.4866024,"rooms":2,"onShelf":"1","addr":"宝山区同济路263号","desc":"同济路263号，近3号线友谊路站。适合宝钢、吴淞口求职。"},{"id":67,"apiId":88,"name":"友间公寓 宝地友乐苑青年驿站","district":"宝山区","lat":31.41168639,"lng":121.42523087,"rooms":2,"onShelf":"1","addr":"宝山区庆安路51弄","desc":"庆安路51弄，近同济路、友谊路。"},{"id":68,"apiId":86,"name":"友间公寓 牡丹江路社区青年驿站","district":"宝山区","lat":31.4110760866513,"lng":121.476560908257,"rooms":2,"onShelf":"1","addr":"宝山区牡丹江路1813号","desc":"牡丹江路1813号，商业街附近生活配套齐全。3号线水产路站。"},{"id":69,"apiId":196,"name":"嘉住·城际铁社区(嘉岸名庭)青年驿站","district":"嘉定区","lat":31.31982513,"lng":121.15637758,"rooms":30,"onShelf":"1","addr":"嘉定区安亭镇庭丽路270弄4号","desc":"安亭镇庭丽路270弄，嘉定汽车城。11号线安亭站。"},{"id":70,"apiId":244,"name":"汉庭优佳上海莘庄场东路酒店青年驿站","district":"松江区","lat":31.10048653,"lng":121.35409714,"rooms":28,"onShelf":"1","addr":"松江区新桥镇场东路608号（莘庄地铁站一号线北二出口打车至酒店约10分钟到达）","desc":"场东路608号，近莘庄工业区。"},{"id":71,"apiId":245,"name":"汉庭上海国家会展中心华新酒店青年驿站","district":"青浦区","lat":31.23544965,"lng":121.2233525,"rooms":19,"onShelf":"1","addr":"青浦区华志路559弄C区2号楼","desc":"华志路559弄，青浦华新镇近国展中心。"},{"id":72,"apiId":207,"name":"中建幸孚+公寓松江店（18号楼6-15层）青年驿站","district":"松江区","lat":31.0561844,"lng":121.2688868,"rooms":11,"onShelf":"1","addr":"上海市松江区施园路299弄","desc":"施园路299弄，同楼栋高区视野更好。"},{"id":73,"apiId":235,"name":"锦江之星上海轻纺市场曹安路青年驿站","district":"嘉定区","lat":31.25564964,"lng":121.3681317,"rooms":10,"onShelf":"1","addr":"上海市嘉定区祁连山南路2229号","desc":"祁连山南路2229号，近嘉定/普陀交界。"},{"id":74,"apiId":214,"name":"嘉定璟歆社区青年驿站","district":"嘉定区","lat":31.37635654,"lng":121.21883617,"rooms":10,"onShelf":"1","addr":"嘉定区陈家山路2000号","desc":"陈家山路2000号，近11号线嘉定西站。"},{"id":75,"apiId":205,"name":"城璟松江中山社区青年驿站","district":"松江区","lat":31.0480324,"lng":121.24128177,"rooms":10,"onShelf":"1","addr":"松江区茸梅路855弄","desc":"茸梅路855弄，近9号线松江老城站。"},{"id":76,"apiId":210,"name":"金盛泽寓青年驿站","district":"青浦区","lat":31.04854554,"lng":120.98974675,"rooms":10,"onShelf":"1","addr":"上海市青浦区金泽镇爱新路26号","desc":"金泽镇爱新路26号，青浦最西端近东方绿舟。"},{"id":77,"apiId":208,"name":"中建幸孚+公寓松江店（18号楼2-5层、9号楼1层）青年驿站","district":"松江区","lat":31.0561844,"lng":121.2688868,"rooms":9,"onShelf":"1","addr":"上海市松江区施园路299弄","desc":"施园路299弄，近9号线松江大学城站。"},{"id":78,"apiId":203,"name":"华润置地有巢国际公寓社区东部经开店青年驿站","district":"松江区","lat":31.04508524,"lng":121.3121544,"rooms":5,"onShelf":"1","addr":"松江区新桥镇书林路600弄","desc":"书林路600弄，松江东部经开区。"},{"id":79,"apiId":211,"name":"华润置地有巢国际公寓泗泾店青年驿站","district":"松江区","lat":31.127324,"lng":121.275339,"rooms":5,"onShelf":"1","addr":"松江区泗泾镇米易路216弄","desc":"米易路216弄，9号线直达徐家汇。"},{"id":80,"apiId":159,"name":"上海醉白池屿果公寓青年驿站","district":"松江区","lat":31.00658969,"lng":121.19094585,"rooms":2,"onShelf":"1","addr":"松江区三新路369号","desc":"三新路369号，9号线醉白池站。醉白池公园旁。"},{"id":81,"apiId":156,"name":"盛青榕寓青年驿站","district":"青浦区","lat":31.15783807,"lng":121.09122123,"rooms":2,"onShelf":"1","addr":"青浦区漕俞路399弄1-12号","desc":"漕俞路399弄，青浦城区近17号线青浦新城站。"},{"id":82,"apiId":123,"name":"青橙智慧公寓青年驿站","district":"青浦区","lat":31.14953496,"lng":121.1680653,"rooms":2,"onShelf":"1","addr":"青浦区沪青平公路3938弄145号楼（近移动智地产业园北门）","desc":"沪青平公路3938弄，近移动智地产业园。"},{"id":83,"apiId":122,"name":"上海松江西部科技园柚米社区青年驿站","district":"松江区","lat":31.045665,"lng":121.160457,"rooms":1,"onShelf":"1","addr":"松江区文俊东路99弄","desc":"文俊东路99弄，近9号线松江体育中心站。"},{"id":84,"apiId":204,"name":"奉发未来·青春公寓青年驿站","district":"奉贤区","lat":30.9157357,"lng":121.51174386,"rooms":30,"onShelf":"1","addr":"奉贤区德欣路55弄","desc":"德欣路55弄，奉贤南桥近5号线奉贤新城站。"},{"id":85,"apiId":236,"name":"锦江之星（上海奉贤宝龙环城东路地铁站）青年驿站","district":"奉贤区","lat":30.93312464,"lng":121.4603779,"rooms":10,"onShelf":"1","addr":"上海市奉贤区航南公路5499号","desc":"航南公路5499号，5号线环城东路站。奉贤宝龙广场旁。"},{"id":86,"apiId":247,"name":"汉庭上海崇明万达广场酒店青年驿站","district":"崇明区","lat":31.62701776,"lng":121.40831432,"rooms":9,"onShelf":"1","addr":"城桥镇一江山路68号（距离崇明万达广场步行300米，距八一步行街、南门汽车站和南门码头约2公里）","desc":"一江山路68号，崇明城桥近万达广场步行300米。"},{"id":87,"apiId":212,"name":"上海市崇明区城投宽庭泊湾社区青年驿站","district":"崇明区","lat":31.35464582,"lng":121.76651043,"rooms":5,"onShelf":"1","addr":"上海市崇明区长兴岛南圆沙路169弄","desc":"长兴岛南圆沙路169弄，近长兴郊野公园。"},{"id":88,"apiId":209,"name":"中科生态数字港项目（数字经济产业园）青年驿站","district":"金山区","lat":30.75684223,"lng":121.35855506,"rooms":3,"onShelf":"1","addr":"上海市金山区渔江路45弄8号楼","desc":"渔江路45弄，金山新城数字经济产业园。"},{"id":89,"apiId":129,"name":"海滨新城青年驿站","district":"金山区","lat":30.7349485,"lng":121.35311763,"rooms":3,"onShelf":"1","addr":"金山区卫清东路2835弄","desc":"卫清东路2835弄，金山城市沙滩旁。"},{"id":90,"apiId":130,"name":"荣遇公寓青年驿站","district":"金山区","lat":30.749206,"lng":121.313565,"rooms":3,"onShelf":"1","addr":"金山区龙皓路2055弄1号荣遇公寓","desc":"龙皓路2055弄，金山新城近万达广场。"},{"id":91,"apiId":165,"name":"上海瀛东度假村青年驿站","district":"崇明区","lat":31.4696768429377,"lng":121.835524619285,"rooms":2,"onShelf":"1","addr":"上海市崇明区陈家镇瀛东村54号","desc":"陈家镇瀛东村54号，崇明岛最东端生态极好。"},{"id":92,"apiId":167,"name":"西岭酒店青年驿站","district":"崇明区","lat":31.75497914,"lng":121.24507768,"rooms":2,"onShelf":"1","addr":"上海市崇明区绿华镇三华公路777号","desc":"绿华镇三华公路777号，崇明岛西部近西沙明珠湖。"},{"id":93,"apiId":125,"name":"锦绣宾馆青年驿站","district":"崇明区","lat":31.62184166,"lng":121.3943309,"rooms":2,"onShelf":"1","addr":"上海崇明区城桥镇新崇南路68号","desc":"城桥镇新崇南路68号，崇明城桥老牌宾馆近区政府。"}];
+
+const map = L.map('map', { zoomControl:false }).setView([31.25, 121.50], 11);
+L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+  subdomains:['1','2','3','4'], maxZoom:18, attribution:'&copy; 高德地图'
+}).addTo(map);
+L.control.zoom({ position:'bottomright' }).addTo(map);
+
+const districtColors = {
+  '黄浦区':'#e74c3c','静安区':'#9b59b6','徐汇区':'#3498db','长宁区':'#1abc9c',
+  '普陀区':'#f39c12','虹口区':'#e67e22','杨浦区':'#2ecc71','浦东新区':'#34495e',
+  '闵行区':'#16a085','宝山区':'#c0392b','嘉定区':'#8e44ad','松江区':'#27ae60',
+  '青浦区':'#2980b9','奉贤区':'#d35400','金山区':'#7f8c8d','崇明区':'#16a085',
+  '临港新片区':'#9b59b6'
+};
+
+let currentData = stationsData.map(s => ({...s}));
+const allMarkers = {};
+let onlyAvailable = false;  // 显示全部驿站
+const activeRanks = new Set();
+const checkedDistricts = new Set();
+
+function createMarker(s) {
+  const hasRoom = s.rooms > 0 && s.onShelf === "1";
+  const color = hasRoom ? '#27ae60' : '#bbb';
+  const size = 30, fontSize = 11;
+  const star = favIds.includes(String(s.apiId)) ? '<div style="position:absolute;top:-6px;right:-6px;font-size:12px;color:#e74c3c;line-height:1;">★</div>' : '';
+  const icon = L.divIcon({
+    className:'',
+    html:`<div style="position:relative;width:${size}px;height:${size}px;"><div class="num-marker" style="width:${size}px;height:${size}px;background:${color};font-size:${fontSize}px">${s.id}</div>${star}</div>`,
+    iconSize:[size,size], iconAnchor:[size/2,size/2]
+  });
+  const roomsHtml = hasRoom
+    ? `<div class="popup-rooms">可预约 ${s.rooms} 间</div>`
+    : `<div class="popup-rooms none">暂无可预约房间</div>`;
+  const badgeColor = districtColors[s.district]||'#666';
+  const m = L.marker([s.lat, s.lng], { icon });
+  const favBtn = favIds.includes(String(s.apiId))
+    ? `<button onclick="toggleFav(${s.apiId})" style="margin-top:6px;width:100%;padding:5px;font-size:11px;border:none;border-radius:5px;background:#e74c3c;color:#fff;cursor:pointer;">取消监控</button>`
+    : `<button onclick="toggleFav(${s.apiId})" style="margin-top:6px;width:100%;padding:5px;font-size:11px;border:none;border-radius:5px;background:#3498db;color:#fff;cursor:pointer;">监控此驿站</button>`;
+  m.bindPopup(`
+    <span class="popup-badge" style="background:${badgeColor}">编号 ${s.id}</span>
+    <div class="popup-name">${s.name}</div>
+    <div class="popup-district">${s.district}</div>
+    ${roomsHtml}
+    <div class="popup-desc">${s.desc}</div>
+    <div class="popup-addr">${s.addr}</div>
+    ${favBtn}
+  `);
+  return m;
+}
+
+function rebuildMarkers() {
+  Object.values(allMarkers).forEach(m => { if (map.hasLayer(m)) map.removeLayer(m); });
+  Object.keys(allMarkers).forEach(k => delete allMarkers[k]);
+  currentData.forEach(s => { allMarkers[s.apiId] = createMarker(s); });
+  applyFilter();
+}
+
+function applyFilter() {
+  // 清除所有标记
+  Object.values(allMarkers).forEach(m => { if (map.hasLayer(m)) map.removeLayer(m); });
+  let visible = currentData.slice();
+
+  // 条件1：只看有房（独立开关）
+  if (onlyAvailable) visible = visible.filter(s => s.rooms > 0 && s.onShelf === "1");
+
+  // 条件2：区域筛选（独立，勾选几个算几个）
+  if (checkedDistricts.size > 0) visible = visible.filter(s => checkedDistricts.has(s.district));
+
+  // 条件3：排名分组（独立，多选叠加）
+  if (activeRanks.size > 0) {
+    visible = visible.filter(s => [...activeRanks].some(r => s.id >= r.min && s.id <= r.max));
+  }
+
+  visible.forEach(s => allMarkers[s.apiId].addTo(map));
+  renderResultList(visible);
+}
+
+function renderResultList(list) {
+  const el = document.getElementById('resultList');
+  const availCount = list.filter(s => s.rooms>0 && s.onShelf==="1").length;
+  document.getElementById('resultTitle').textContent = `${list.length}家 · ${availCount}家有房`;
+  el.innerHTML = list.slice().sort((a,b) => a.id - b.id).map(s => {
+    const hasRoom = s.rooms>0 && s.onShelf==="1";
+    const isFav = favIds.includes(String(s.apiId));
+    return `
+      <div class="result-item" data-apiid="${s.apiId}">
+        <span class="r-bell ${isFav?'on':''}" data-bell="${s.apiId}">${isFav?'★':'☆'}</span>
+        <span class="r-num">#${s.id}</span><span class="r-name">${s.name.replace('青年驿站','')}</span>
+        <div class="r-meta">${s.district} · ${hasRoom?`<span class="r-rooms">可约${s.rooms}间</span>`:'<span class="r-rooms none">满房</span>'}</div>
+      </div>
+    `;
+  }).join('');
+  el.querySelectorAll('.result-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (e.target.dataset.bell) return;
+      const apiId = item.dataset.apiid;
+      const s = currentData.find(x => String(x.apiId) === String(apiId));
+      if (s) { map.setView([s.lat, s.lng], 15, {animate:false}); setTimeout(()=>{ if(window.innerWidth>768) map.panBy([-160, 0], {animate:true}); allMarkers[s.apiId].openPopup(); }, 50); }
+    });
+  });
+  el.querySelectorAll('.r-bell').forEach(bell => {
+    bell.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFav(bell.dataset.bell);
+      bell.classList.toggle('on');
+      bell.textContent = bell.classList.contains('on') ? '★' : '☆';
+      if (monitorTimer) checkMonitor();
+    });
+  });
+}
+
+// 排名分组
+const rankGroups = [
+  {min:1,max:10,label:"1-10名",desc:"顶级推荐"},
+  {min:11,max:20,label:"11-20名",desc:"市中心优选"},
+  {min:21,max:30,label:"21-30名",desc:"市区便利"},
+  {min:31,max:50,label:"31-50名",desc:"近郊通勤"},
+  {min:51,max:93,label:"51名+",desc:"远郊配套"},
+];
+const rankGrid = document.getElementById('rankGrid');
+rankGroups.forEach(rg => {
+  const btn = document.createElement('div');
+  btn.className = 'rank-btn';
+  btn.innerHTML = `${rg.label}<span class="rank-desc">${rg.desc}</span>`;
+  btn.addEventListener('click', () => {
+    if (activeRanks.has(rg)) { activeRanks.delete(rg); btn.classList.remove('active'); }
+    else { activeRanks.add(rg); btn.classList.add('active'); }
+    applyFilter();
+  });
+  rankGrid.appendChild(btn);
+});
+
+// 区域列表
+const hotDistricts = ['黄浦区','静安区','徐汇区','长宁区','虹口区','杨浦区','浦东新区','普陀区','闵行区','宝山区','嘉定区','松江区','青浦区','奉贤区','金山区','崇明区','临港新片区'];
+const districts = [...new Set(currentData.map(s => s.district))].sort((a,b) => hotDistricts.indexOf(a) - hotDistricts.indexOf(b));
+const districtListEl = document.getElementById('districtList');
+districts.forEach(d => {
+  const list = currentData.filter(s => s.district === d);
+  const color = districtColors[d] || '#666';
+  const availCount = list.filter(s => s.rooms > 0 && s.onShelf === "1").length;
+  const label = document.createElement('label');
+  label.className = 'checkbox-item';
+  label.innerHTML = `<input type="checkbox" value="${d}"><div class="c-dot" style="background:${color}"></div><span>${d}</span><span class="c-rooms">${availCount}有房</span><span class="c-count">${list.length}</span>`;
+  label.querySelector('input').addEventListener('change', (e) => {
+    if (e.target.checked) checkedDistricts.add(d);
+    else checkedDistricts.delete(d);
+    applyFilter();
+  });
+  districtListEl.appendChild(label);
+});
+document.getElementById('btnAll').addEventListener('click', () => {
+  document.querySelectorAll('#districtList input').forEach(cb => { cb.checked = true; checkedDistricts.add(cb.value); });
+  applyFilter();
+});
+document.getElementById('btnNone').addEventListener('click', () => {
+  document.querySelectorAll('#districtList input').forEach(cb => cb.checked = false);
+  checkedDistricts.clear(); applyFilter();
+});
+
+// 刷新房源
+async function refreshRooms() {
+  try {
+    const resp = await fetch('https://qnyz.shyouth.net/qnyzApi/hous/housListBatch', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({housType:1, pageNum:1, pageSize:200})
+    });
+    const json = await resp.json();
+    if (json.success) {
+      json.data.forEach(fs => {
+        const ex = currentData.find(s => s.apiId === fs.id);
+        if (ex) { ex.rooms = parseInt(fs.houseCount)||0; ex.onShelf = String(fs.isOnShelf||"0"); }
+      });
+      rebuildMarkers();
+      // 更新右侧列表
+      const ac = currentData.filter(s => s.rooms>0 && s.onShelf==="1").length;
+      document.getElementById('statusBar').textContent = `已更新 · ${ac}家有房 · ${new Date().toLocaleTimeString()}`;
+      document.getElementById('resultTitle').textContent = `共${currentData.length}家 · ${ac}家有房`;
+    }
+  } catch(e) {
+    document.getElementById('statusBar').textContent = '跨域限制，显示缓存数据';
+  }
+}
+document.getElementById('refreshBtn').addEventListener('click', async function() {
+  this.disabled = true;
+  document.getElementById('statusBar').textContent = '正在获取...';
+  await refreshRooms();
+  this.disabled = false;
+});
+
+// 按日期查询日历
+document.getElementById('queryBtn').addEventListener('click', async function() {
+  const dFrom = document.getElementById('dateFrom').value;
+  const dTo = document.getElementById('dateTo').value;
+  if (!dFrom || !dTo) { alert('请选择入住和离店日期'); return; }
+  this.disabled = true;
+  this.textContent = '正在查询日历...';
+  // 重置所有房间数
+  currentData.forEach(s => { s.rooms = 0; s.onShelf = "0"; s.dateRooms = 0; });
+  // 逐个查日历
+  let done = 0, total = currentData.length;
+  for (const s of currentData) {
+    try {
+      const url = `https://qnyz.shyouth.net/qnyzApi/hous/calendar?id=${s.apiId}&startTime=${dFrom}&endTime=${dTo}`;
+      const resp = await fetch(url);
+      const json = await resp.json();
+      if (json.success && json.data) {
+        // 只筛选入住期间的日期：入住日当天到离店日前一天
+        const stayNights = json.data.filter(day => {
+          return day.applyDate >= dFrom && day.applyDate < dTo;
+        });
+        // 取入住期间每晚的最小可约数（任何一晚没房就住不了）
+        let minRooms = 999;
+        let hasData = false;
+        stayNights.forEach(day => {
+          hasData = true;
+          const n = parseInt(day.applyNumber)||0;
+          if (n < minRooms) minRooms = n;
+        });
+        if (hasData && minRooms > 0) { s.rooms = minRooms; s.onShelf = "1"; }
+        else { s.rooms = 0; s.onShelf = "0"; }
+      }
+    } catch(e) {}
+    done++;
+    if (done % 20 === 0) this.textContent = `查询中... ${done}/${total}`;
+  }
+  rebuildMarkers();
+  const availStations = currentData.filter(s => s.rooms>0 && s.onShelf==="1").sort((a,b)=>a.id-b.id);
+  this.textContent = '查询';
+  this.disabled = false;
+  document.getElementById('statusBar').textContent = `${dFrom}至${dTo} · ${availStations.length}家可住`;
+  renderResultList(availStations);
+  document.getElementById('resultTitle').textContent = `${availStations.length}家可住 · ${dFrom.slice(5)}入住`;
+  document.getElementById('resultPanel').classList.add('open');
+  // 自动开始监控（如果有收藏的驿站）
+  if (favIds.length > 0 && !monitorTimer) {
+    if (Notification.permission !== 'granted') Notification.requestPermission();
+    monitorFirstCheck = true;
+    monitorTimer = setInterval(checkMonitor, 60000);
+    const btn = document.getElementById('monitorBtn');
+    btn.textContent = `停止监控（${favIds.length}家）`;
+    btn.style.background = '#e74c3c';
+    document.getElementById('statusBar').textContent = `监控中 · ${favIds.length}家 · ${dFrom}至${dTo}`;
+    checkMonitor();
+  }
+});
+
+// 重新打开右侧列表
+document.getElementById('resultToggle').addEventListener('click', () => {
+  const panel = document.getElementById('resultPanel');
+  const btn = document.getElementById('resultToggle');
+  if (panel.classList.contains('open')) {
+    panel.classList.remove('open');
+    btn.style.right = '0';
+    btn.textContent = '▶';
+  } else {
+    panel.classList.add('open');
+    btn.style.right = '320px';
+    btn.textContent = '◀';
+  }
+});
+
+// 折叠
+const sidebar = document.getElementById('sidebar');
+const toggleBtn = document.getElementById('toggleBtn');
+toggleBtn.addEventListener('click', () => {
+  sidebar.classList.toggle('collapsed');
+  toggleBtn.classList.toggle('collapsed');
+  toggleBtn.textContent = sidebar.classList.contains('collapsed') ? '▶' : '◀';
+});
+if (window.innerWidth <= 768) { sidebar.classList.add('collapsed'); toggleBtn.classList.add('collapsed'); toggleBtn.textContent = '▶'; }
+
+// ===== 收藏监控 + Bark推送 =====
+let favIds = JSON.parse(localStorage.getItem('favIds') || '[]');
+let monitorTimer = null;
+let monitorFirstCheck = true;
+
+function renderFavList() {
+  const el = document.getElementById('favList');
+  if (favIds.length === 0) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div style="margin-top:4px;color:#333;font-weight:600;">监控中（' + favIds.length + '家）：</div>' +
+    favIds.map(id => {
+      const s = currentData.find(x => String(x.apiId) === String(id));
+      return s ? `<div style="padding:2px 0;color:#27ae60;">#${s.id} ${s.name.replace('青年驿站','')}</div>` : '';
+    }).join('');
+}
+
+window.toggleFav = function(apiId) {
+  apiId = String(apiId);
+  const idx = favIds.indexOf(apiId);
+  if (idx >= 0) favIds.splice(idx, 1);
+  else favIds.push(apiId);
+  localStorage.setItem('favIds', JSON.stringify(favIds));
+  renderFavList();
+  rebuildMarkers();
+};
+
+document.getElementById('clearFav').addEventListener('click', function() {
+  if (favIds.length === 0) return;
+  if (!confirm('确定清空全部 ' + favIds.length + ' 个监控？')) return;
+  favIds.length = 0;
+  localStorage.setItem('favIds', JSON.stringify(favIds));
+  renderFavList();
+  rebuildMarkers();
+  // 更新右侧列表的★
+  document.querySelectorAll('.r-bell').forEach(b => { b.classList.remove('on'); b.textContent = '☆'; });
+  if (monitorTimer) checkMonitor();
+});
+
+async function sendBark(title, body) {
+  const key = document.getElementById('barkKey').value.trim();
+  if (!key) { addLog('>>> 未填Bark Key，跳过推送', false); return; }
+  try {
+    const url = `https://api.day.app/${encodeURIComponent(key)}/${encodeURIComponent(title)}/${encodeURIComponent(body)}`;
+    await fetch(url, {mode: 'no-cors'});
+    addLog('>>> Bark推送已发送', true);
+  } catch(e) { addLog('>>> Bark推送失败: '+e.message, false); }
+}
+
+function addLog(text, ok) {
+  const log = document.getElementById('monitorLog');
+  const time = new Date().toLocaleTimeString();
+  const color = ok === true ? '#27ae60' : ok === false ? '#e74c3c' : '#666';
+  log.innerHTML = `<div style="padding:1px 0;color:${color};">[${time}] ${text}</div>` + log.innerHTML;
+}
+
+async function checkMonitor() {
+  if (favIds.length === 0) return;
+  const dFrom = document.getElementById('dateFrom').value;
+  const dTo = document.getElementById('dateTo').value;
+  const useDate = dFrom && dTo;
+
+  if (useDate) {
+    // 按监控的日期区间查日历
+    const newRooms = [];
+    for (const id of favIds) {
+      const s = currentData.find(x => String(x.apiId) === String(id));
+      if (!s) continue;
+      try {
+        const resp = await fetch(`https://qnyz.shyouth.net/qnyzApi/hous/calendar?id=${id}&startTime=${dFrom}&endTime=${dTo}`);
+        const json = await resp.json();
+        if (!json.success || !json.data) { addLog(`${s.name.replace('青年驿站','')}: 查询失败`, false); continue; }
+        const stayNights = json.data.filter(day => day.applyDate >= dFrom && day.applyDate < dTo);
+        let minRooms = 999; let hasData = false;
+        stayNights.forEach(day => { hasData = true; const n = parseInt(day.applyNumber)||0; if (n < minRooms) minRooms = n; });
+        const old = s.rooms;
+        if (hasData && minRooms > 0) { s.rooms = minRooms; s.onShelf = "1"; }
+        else { s.rooms = 0; s.onShelf = "0"; }
+        addLog(`${s.name.replace('青年驿站','')}: ${s.rooms>0?`可住${s.rooms}间`:'满房'}`, s.rooms>0);
+        // 第一次检查：有房就报；后续只报从无变有
+        if (monitorFirstCheck) {
+          if (s.rooms > 0) newRooms.push({name: s.name, rooms: s.rooms, district: s.district});
+        } else if (old === 0 && s.rooms > 0) {
+          newRooms.push({name: s.name, rooms: s.rooms, district: s.district});
+        }
+      } catch(e) { addLog(`${s.name.replace('青年驿站','')}: 网络错误`, false); }
+    }
+    rebuildMarkers();
+    if (newRooms.length > 0) {
+      const title = `${newRooms.length}家监控驿站${dFrom.slice(5)}可住了！`;
+      const body = newRooms.map(r => `${r.name.replace('青年驿站','')} ${r.rooms}间\n${r.addr}`).join('\n\n');
+      if (Notification.permission === 'granted') new Notification(title, {body});
+      sendBark(title, body);
+      addLog(`>>> 推送Bark: ${newRooms.length}家有房`, true);
+    }
+    document.getElementById('statusBar').textContent = `监控中... ${dFrom}至${dTo} · ${new Date().toLocaleTimeString()}`;
+    monitorFirstCheck = false;
+  } else {
+    // 没选日期，监控总房间数
+    try {
+      const resp = await fetch('https://qnyz.shyouth.net/qnyzApi/hous/housListBatch', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({housType:1, pageNum:1, pageSize:200})
+      });
+      const json = await resp.json();
+      if (!json.success) return;
+      const newRooms = [];
+      json.data.forEach(fs => {
+        const id = String(fs.id);
+        if (!favIds.includes(id)) return;
+        const n = parseInt(fs.houseCount)||0;
+        const ex = currentData.find(s => String(s.apiId) === id);
+        if (ex) {
+          const old = ex.rooms;
+          ex.rooms = n;
+          ex.onShelf = String(fs.isOnShelf||"0");
+          if (old === 0 && n > 0) newRooms.push({name: ex.name, rooms: n, district: ex.district});
+        }
+      });
+      rebuildMarkers();
+      if (newRooms.length > 0) {
+        const title = `${newRooms.length}家监控驿站有房了！`;
+        const body = newRooms.map(r => `${r.name.replace('青年驿站','')} ${r.rooms}间\n${r.addr}`).join('\n\n');
+        if (Notification.permission === 'granted') new Notification(title, {body});
+        sendBark(title, body);
+      }
+    } catch(e) {}
+  }
+}
+
+document.getElementById('monitorBtn').addEventListener('click', function() {
+  if (monitorTimer) {
+    clearInterval(monitorTimer); monitorTimer = null;
+    this.textContent = '开始监控（每60秒刷新）';
+    this.style.background = '#3498db';
+    document.getElementById('statusBar').textContent = '监控已停止';
+    showToast('监控已停止');
+  } else {
+    if (favIds.length === 0) { showToast('先点驿站旁边的☆铃铛，选要监控的驿站'); return; }
+    const dFrom = document.getElementById('dateFrom').value;
+    const dTo = document.getElementById('dateTo').value;
+    if (!dFrom || !dTo) { showToast('先选好入住和离店日期'); return; }
+    try { if (Notification.permission !== 'granted') Notification.requestPermission(); } catch(e){}
+    monitorFirstCheck = true;
+    monitorTimer = setInterval(checkMonitor, 60000);
+    this.textContent = `停止监控（${favIds.length}家）`;
+    this.style.background = '#e74c3c';
+    document.getElementById('statusBar').textContent = `监控中 · ${favIds.length}家 · ${dFrom}至${dTo}`;
+    showToast(`开始监控${favIds.length}家驿站`);
+    checkMonitor();
+  }
+});
+
+function showToast(msg) {
+  let t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    t.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;pointer-events:none;';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(()=>{ t.style.opacity = '0'; t.style.transition = 'opacity .3s'; }, 2500);
+}
+
+// 默认日期：明天入住，后天离店
+(function(){
+  const d = new Date(); d.setDate(d.getDate()+1);
+  const d2 = new Date(); d2.setDate(d2.getDate()+2);
+  const fmt = dt => dt.toISOString().slice(0,10);
+  document.getElementById('dateFrom').value = fmt(d);
+  document.getElementById('dateTo').value = fmt(d2);
+})();
+
+renderFavList();
+rebuildMarkers();
+refreshRooms();
+
+// 打开右侧面板（手机上默认收起，先看地图）
+if (window.innerWidth > 768) {
+  document.getElementById('resultPanel').classList.add('open');
+}
+
+// 显示全部：清空搜索和筛选，恢复总房间数
+document.getElementById('resetList').addEventListener('click', function() {
+  document.getElementById('searchBox').value = '';
+  checkedDistricts.clear();
+  activeRanks.clear();
+  document.querySelectorAll('#districtList input').forEach(cb => cb.checked = false);
+  document.querySelectorAll('.rank-btn').forEach(b => b.classList.remove('active'));
+  applyFilter();
+  refreshRooms();
+});
+
+// 手机端浮动按钮打开列表
+document.getElementById('mobileListBtn').addEventListener('click', function() {
+  const panel = document.getElementById('resultPanel');
+  panel.classList.toggle('open');
+  this.textContent = panel.classList.contains('open') ? '关闭列表' : '驿站列表';
+});
+
+// 手机端关闭面板
+document.getElementById('closePanel').addEventListener('click', function() {
+  document.getElementById('resultPanel').classList.remove('open');
+  document.getElementById('mobileListBtn').textContent = '驿站列表';
+});
+
+// 搜索框过滤列表
+document.getElementById('searchBox').addEventListener('input', function() {
+  const q = this.value.trim().toLowerCase();
+  document.querySelectorAll('.result-item').forEach(item => {
+    const text = item.textContent.toLowerCase();
+    item.style.display = (!q || text.includes(q)) ? '' : 'none';
+  });
+});
+
+// 监控日志清空
+function clearLog() { document.getElementById('monitorLog').innerHTML = ''; }
+</script>
+</body>
+</html>
