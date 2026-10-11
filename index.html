@@ -196,7 +196,8 @@
   <div class="date-row"><label>离店</label><input type="date" id="dateTo"></div>
   <button class="query-btn" id="queryBtn">查询</button>
   <div style="font-size:10px;color:#666;margin:6px 0 4px;">Bark Key</div>
-  <input type="text" id="barkKey" placeholder="粘贴Bark Key" style="width:100%;padding:5px;font-size:11px;border:1px solid #ddd;border-radius:5px;margin-bottom:6px;">
+  <input type="text" id="barkKey" placeholder="粘贴Bark Key" style="width:100%;padding:5px;font-size:11px;border:1px solid #ddd;border-radius:5px;margin-bottom:4px;">
+  <button id="testBark" style="width:100%;padding:4px;font-size:10px;border:1px solid #3498db;border-radius:4px;background:#fff;color:#3498db;cursor:pointer;margin-bottom:6px;">测试推送</button>
   <button id="monitorBtn" style="width:100%;padding:6px;font-size:11px;border:none;border-radius:6px;background:#3498db;color:#fff;cursor:pointer;font-weight:600;margin-bottom:4px;">开始监控（每60秒刷新）</button>
   <div id="favList" style="font-size:10px;color:#666;"></div>
   <button id="clearFav" style="width:100%;padding:4px;font-size:10px;border:1px solid #e74c3c;border-radius:4px;background:#fff;color:#e74c3c;cursor:pointer;margin-top:4px;">清空全部监控</button>
@@ -547,8 +548,9 @@ async function sendBark(title, body) {
   if (!key) { addLog('>>> 未填Bark Key，跳过推送', false); return; }
   try {
     const url = `https://api.day.app/${encodeURIComponent(key)}/${encodeURIComponent(title)}/${encodeURIComponent(body)}`;
-    await fetch(url, {mode: 'no-cors'});
-    addLog('>>> Bark推送已发送', true);
+    const img = new Image();
+    img.src = url;
+    addLog('>>> Bark推送已发送: '+title, true);
   } catch(e) { addLog('>>> Bark推送失败: '+e.message, false); }
 }
 
@@ -582,10 +584,7 @@ async function checkMonitor() {
         if (hasData && minRooms > 0) { s.rooms = minRooms; s.onShelf = "1"; }
         else { s.rooms = 0; s.onShelf = "0"; }
         addLog(`${s.name.replace('青年驿站','')}: ${s.rooms>0?`可住${s.rooms}间`:'满房'}`, s.rooms>0);
-        // 第一次检查：有房就报；后续只报从无变有
-        if (monitorFirstCheck) {
-          if (s.rooms > 0) newRooms.push({name: s.name, rooms: s.rooms, district: s.district});
-        } else if (old === 0 && s.rooms > 0) {
+        if (s.rooms > 0 && (monitorFirstCheck || old === 0)) {
           newRooms.push({name: s.name, rooms: s.rooms, district: s.district});
         }
       } catch(e) { addLog(`${s.name.replace('青年驿站','')}: 网络错误`, false); }
@@ -594,9 +593,11 @@ async function checkMonitor() {
     if (newRooms.length > 0) {
       const title = `${newRooms.length}家监控驿站${dFrom.slice(5)}可住了！`;
       const body = newRooms.map(r => `${r.name.replace('青年驿站','')} ${r.rooms}间\n${r.addr}`).join('\n\n');
-      if (Notification.permission === 'granted') new Notification(title, {body});
+      try { if (Notification.permission === 'granted') new Notification(title, {body}); } catch(e){}
       sendBark(title, body);
       addLog(`>>> 推送Bark: ${newRooms.length}家有房`, true);
+    } else {
+      addLog(`>>> 无新增可住，不推送`, false);
     }
     document.getElementById('statusBar').textContent = `监控中... ${dFrom}至${dTo} · ${new Date().toLocaleTimeString()}`;
     monitorFirstCheck = false;
@@ -669,6 +670,16 @@ function showToast(msg) {
   clearTimeout(t._timer);
   t._timer = setTimeout(()=>{ t.style.opacity = '0'; t.style.transition = 'opacity .3s'; }, 2500);
 }
+
+// 测试Bark推送
+document.getElementById('testBark').addEventListener('click', function() {
+  const key = document.getElementById('barkKey').value.trim();
+  if (!key) { showToast('先填Bark Key'); return; }
+  const url = `https://api.day.app/${encodeURIComponent(key)}/测试推送/如果你收到了说明Bark配置成功`;
+  const img = new Image();
+  img.src = url;
+  showToast('已发送测试推送，看手机有没有收到');
+});
 
 // 默认日期：明天入住，后天离店
 (function(){
